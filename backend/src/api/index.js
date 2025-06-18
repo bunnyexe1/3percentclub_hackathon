@@ -1,20 +1,28 @@
-const express = require('express');
-const serverless = require('vercel-express');
+// api/index.js
 const mongoose = require('mongoose');
-const cors = require('cors');
-
-const app = express();
-app.use(cors());
-app.use(express.json());
 
 // MongoDB URI from environment variables
-const MONGO_URI = 'mongodb+srv://bunnychokkam:bunnychokkam@cluster0.iu0myns.mongodb.net/';
+const MONGO_URI = process.env.MONGO_URI || 'mongodb+srv://bunnychokkam:bunnychokkam@cluster0.iu0myns.mongodb.net/';
 
-// MongoDB connection
-mongoose
-  .connect(MONGO_URI)
-  .then(() => console.log('✅ MongoDB connected'))
-  .catch((err) => console.error('❌ MongoDB connection error:', err));
+let isConnected = false;
+
+async function connectToDatabase() {
+  if (isConnected) {
+    return;
+  }
+
+  try {
+    await mongoose.connect(MONGO_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
+    isConnected = true;
+    console.log('✅ MongoDB connected');
+  } catch (error) {
+    console.error('❌ MongoDB connection error:', error);
+    throw error;
+  }
+}
 
 // Listing Schema
 const ListingSchema = new mongoose.Schema({
@@ -53,186 +61,189 @@ const ListingSchema = new mongoose.Schema({
 });
 
 ListingSchema.index({ status: 1 });
-const Listing = mongoose.model('Listing', ListingSchema);
+const Listing = mongoose.models.Listing || mongoose.model('Listing', ListingSchema);
 
-// --- Routes ---
+// Helper function to set CORS headers
+function setCorsHeaders(res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+}
 
-app.get('/api/ping', (req, res) => res.send('pong'));
+// Main handler function
+export default async function handler(req, res) {
+  setCorsHeaders(res);
 
-// Create a pending listing
-app.post('/api/listings', async (req, res) => {
-  try {
-    const {
-      productName,
-      productDescription,
-      productCategory,
-      price,
-      imageUrls,
-      seller,
-      saleType,
-    } = req.body;
-
-    if (!['Sneakers', 'Apparel', 'Watches'].includes(productCategory))
-      return res.status(400).json({ error: 'Invalid category' });
-
-    if (!['Retail', 'Resell'].includes(saleType))
-      return res.status(400).json({ error: 'Invalid sale type' });
-
-    if (!productName || !productDescription || !price || !imageUrls || imageUrls.length === 0 || !seller)
-      return res.status(400).json({ error: 'Missing required fields' });
-
-    const lastListing = await Listing.findOne().sort({ listingId: -1 });
-    const listingId = lastListing ? lastListing.listingId + 1 : 1;
-
-    const listing = new Listing({
-      listingId,
-      productName,
-      productDescription,
-      productCategory,
-      imageUrls,
-      seller,
-      price,
-      status: 'Pending',
-      saleType,
-      purchaseHistory: [],
-    });
-
-    await listing.save();
-    res.status(201).json({ listingId, message: 'Pending listing created' });
-  } catch (error) {
-    console.error('Error creating listing:', error);
-    res.status(500).json({ error: 'Failed to create listing' });
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
   }
-});
 
-// Update listing
-app.put('/api/listings/:listingId', async (req, res) => {
+  // Connect to database
   try {
-    const { listingId } = req.params;
-    const { status, buyer, price, tokenId } = req.body;
+    await connectToDatabase();
+  } catch (error) {
+    return res.status(500).json({ error: 'Database connection failed' });
+  }
 
-    if (status && !['Pending', 'Listed', 'Cancelled'].includes(status))
-      return res.status(400).json({ error: 'Invalid status' });
+  const { url, method } = req;
 
-    const updateData = {};
-    if (status) updateData.status = status;
-    if (buyer && price && tokenId) {
-      updateData.$push = {
-        purchaseHistory: {
-          buyer,
-          price,
-          tokenId,
-          timestamp: new Date(),
-        },
-      };
+  try {
+    // Route: GET /api/ping
+    if (url === '/api/ping' && method === 'GET') {
+      return res.status(200).send('pong');
     }
 
-    const listing = await Listing.findOneAndUpdate(
-      { listingId: parseInt(listingId) },
-      updateData,
-      { new: true }
-    );
+    // Route: POST /api/listings - Create a pending listing
+    if (url === '/api/listings' && method === 'POST') {
+      const {
+        productName,
+        productDescription,
+        productCategory,
+        price,
+        imageUrls,
+        seller,
+        saleType,
+      } = req.body;
 
-    if (!listing)
-      return res.status(404).json({ error: 'Listing not found' });
+      if (!['Sneakers', 'Apparel', 'Watches'].includes(productCategory))
+        return res.status(400).json({ error: 'Invalid category' });
 
-    res.json({ message: 'Listing updated', listing });
+      if (!['Retail', 'Resell'].includes(saleType))
+        return res.status(400).json({ error: 'Invalid sale type' });
+
+      if (!productName || !productDescription || !price || !imageUrls || imageUrls.length === 0 || !seller)
+        return res.status(400).json({ error: 'Missing required fields' });
+
+      const lastListing = await Listing.findOne().sort({ listingId: -1 });
+      const listingId = lastListing ? lastListing.listingId + 1 : 1;
+
+      const listing = new Listing({
+        listingId,
+        productName,
+        productDescription,
+        productCategory,
+        imageUrls,
+        seller,
+        price,
+        status: 'Pending',
+        saleType,
+        purchaseHistory: [],
+      });
+
+      await listing.save();
+      return res.status(201).json({ listingId, message: 'Pending listing created' });
+    }
+
+    // Route: GET /api/listings - Get all listed items
+    if (url === '/api/listings' && method === 'GET') {
+      const listings = await Listing.find({ status: 'Listed' });
+      return res.json(listings);
+    }
+
+    // Route: PUT /api/listings/:listingId - Update listing
+    if (url.startsWith('/api/listings/') && method === 'PUT') {
+      const listingId = url.split('/')[3];
+      const { status, buyer, price, tokenId } = req.body;
+
+      if (status && !['Pending', 'Listed', 'Cancelled'].includes(status))
+        return res.status(400).json({ error: 'Invalid status' });
+
+      const updateData = {};
+      if (status) updateData.status = status;
+      if (buyer && price && tokenId) {
+        updateData.$push = {
+          purchaseHistory: {
+            buyer,
+            price,
+            tokenId,
+            timestamp: new Date(),
+          },
+        };
+      }
+
+      const listing = await Listing.findOneAndUpdate(
+        { listingId: parseInt(listingId) },
+        updateData,
+        { new: true }
+      );
+
+      if (!listing)
+        return res.status(404).json({ error: 'Listing not found' });
+
+      return res.json({ message: 'Listing updated', listing });
+    }
+
+    // Route: GET /api/listings/:listingId - Get listing by ID
+    if (url.startsWith('/api/listings/') && method === 'GET' && !url.includes('/collection/')) {
+      const listingId = url.split('/')[3];
+      const listing = await Listing.findOne({ listingId: parseInt(listingId) });
+      
+      if (!listing)
+        return res.status(404).json({ error: 'Listing not found' });
+      
+      return res.json(listing);
+    }
+
+    // Route: DELETE /api/listings/:listingId - Delete listing
+    if (url.startsWith('/api/listings/') && method === 'DELETE') {
+      const listingId = url.split('/')[3];
+      const { seller } = req.body;
+
+      if (!seller)
+        return res.status(400).json({ error: 'Seller address is required' });
+
+      const listing = await Listing.findOne({ listingId: parseInt(listingId) });
+      if (!listing)
+        return res.status(404).json({ error: 'Listing not found' });
+
+      if (listing.seller.toLowerCase() !== seller.toLowerCase())
+        return res.status(403).json({ error: 'Only the seller can delete this listing' });
+
+      await Listing.deleteOne({ listingId: parseInt(listingId) });
+      return res.json({ message: 'Listing deleted successfully' });
+    }
+
+    // Route: GET /api/listings/collection/:wallet - Get collection by wallet
+    if (url.startsWith('/api/listings/collection/') && method === 'GET') {
+      const wallet = url.split('/')[4];
+      const listings = await Listing.find({
+        'purchaseHistory.buyer': wallet,
+      });
+      return res.json(listings);
+    }
+
+    // Route: POST /api/resale-purchases - Record resale purchase
+    if (url === '/api/resale-purchases' && method === 'POST') {
+      const { listingId, buyer, price, tokenId } = req.body;
+
+      if (!listingId || !buyer || !price || !tokenId)
+        return res.status(400).json({ error: 'Missing required fields' });
+
+      const listing = await Listing.findOne({
+        'purchaseHistory.tokenId': tokenId,
+      });
+
+      if (!listing)
+        return res.status(404).json({ error: 'Listing not found' });
+
+      listing.purchaseHistory.push({
+        buyer,
+        price,
+        tokenId,
+        timestamp: new Date(),
+      });
+
+      await listing.save();
+      return res.json({ message: 'Resale purchase recorded' });
+    }
+
+    // Route not found
+    return res.status(404).json({ error: 'Route not found' });
+
   } catch (error) {
-    console.error('Error updating listing:', error);
-    res.status(500).json({ error: 'Failed to update listing' });
+    console.error('API Error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: error.message });
   }
-});
-
-// Get all listed items
-app.get('/api/listings', async (req, res) => {
-  try {
-    const listings = await Listing.find({ status: 'Listed' });
-    res.json(listings);
-  } catch (error) {
-    console.error('Error fetching listings:', error);
-    res.status(500).json({ error: 'Failed to fetch listings' });
-  }
-});
-
-// Get listing by ID
-app.get('/api/listings/:listingId', async (req, res) => {
-  try {
-    const listing = await Listing.findOne({ listingId: parseInt(req.params.listingId) });
-    if (!listing)
-      return res.status(404).json({ error: 'Listing not found' });
-    res.json(listing);
-  } catch (error) {
-    console.error('Error fetching listing:', error);
-    res.status(500).json({ error: 'Failed to fetch listing' });
-  }
-});
-
-// Delete listing
-app.delete('/api/listings/:listingId', async (req, res) => {
-  try {
-    const { listingId } = req.params;
-    const { seller } = req.body;
-
-    if (!seller)
-      return res.status(400).json({ error: 'Seller address is required' });
-
-    const listing = await Listing.findOne({ listingId: parseInt(listingId) });
-    if (!listing)
-      return res.status(404).json({ error: 'Listing not found' });
-
-    if (listing.seller.toLowerCase() !== seller.toLowerCase())
-      return res.status(403).json({ error: 'Only the seller can delete this listing' });
-
-    await Listing.deleteOne({ listingId: parseInt(listingId) });
-    res.json({ message: 'Listing deleted successfully' });
-  } catch (error) {
-    console.error('Error deleting listing:', error);
-    res.status(500).json({ error: 'Failed to delete listing' });
-  }
-});
-
-// Get collection by wallet
-app.get('/api/listings/collection/:wallet', async (req, res) => {
-  try {
-    const listings = await Listing.find({
-      'purchaseHistory.buyer': req.params.wallet,
-    });
-    res.json(listings);
-  } catch (error) {
-    console.error('Error fetching collection:', error);
-    res.status(500).json({ error: 'Failed to fetch collection' });
-  }
-});
-
-// Record resale purchase
-app.post('/api/resale-purchases', async (req, res) => {
-  try {
-    const { listingId, buyer, price, tokenId } = req.body;
-
-    if (!listingId || !buyer || !price || !tokenId)
-      return res.status(400).json({ error: 'Missing required fields' });
-
-    const listing = await Listing.findOne({
-      'purchaseHistory.tokenId': tokenId,
-    });
-
-    if (!listing)
-      return res.status(404).json({ error: 'Listing not found' });
-
-    listing.purchaseHistory.push({
-      buyer,
-      price,
-      tokenId,
-      timestamp: new Date(),
-    });
-
-    await listing.save();
-    res.json({ message: 'Resale purchase recorded' });
-  } catch (error) {
-    console.error('Error recording resale purchase:', error);
-    res.status(500).json({ error: 'Failed to record resale purchase' });
-  }
-});
-
-// Export the app for Vercel
-module.exports = serverless(app);
+}
