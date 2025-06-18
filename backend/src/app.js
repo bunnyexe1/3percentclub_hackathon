@@ -11,10 +11,18 @@ app.use(cors({ origin: ['http://localhost:3000', 'https://3percentclub-hackathon
 app.use(express.json());
 
 // MongoDB connection
-const MONGO_URI = process.env.MONGO_URI;
-mongoose.connect(MONGO_URI)
-  .then(() => console.log('MongoDB connected'))
-  .catch((err) => console.error('MongoDB connection failed:', err));
+const MONGO_URI = 'mongodb+srv://bunnychokkam:bunnychokkam@cluster0.iu0myns.mongodb.net/';
+
+// MongoDB connection
+const connectDB = async () => {
+  try {
+    await mongoose.connect(MONGO_URI);
+    console.log('MongoDB connected');
+  } catch (error) {
+    console.error('MongoDB connection failed:', error);
+    throw error;
+  }
+};
 
 // Mongoose Schema
 const ListingSchema = new mongoose.Schema({
