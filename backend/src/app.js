@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -6,25 +7,16 @@ const cors = require('cors');
 const app = express();
 
 // Middleware
-app.use(cors());
+app.use(cors({ origin: ['http://localhost:3000', 'https://3percentclub-hackathon.vercel.app'] }));
 app.use(express.json());
 
-// Hardcoded values
-const PORT = 5000;
-const MONGO_URI = 'mongodb+srv://bunnychokkam:bunnychokkam@cluster0.iu0myns.mongodb.net/';
-
 // MongoDB connection
-const connectDB = async () => {
-  try {
-    await mongoose.connect(MONGO_URI);
-    console.log('MongoDB connected');
-  } catch (error) {
-    console.error('MongoDB connection failed:', error);
-    throw error;
-  }
-};
+const MONGO_URI = process.env.MONGO_URI;
+mongoose.connect(MONGO_URI)
+  .then(() => console.log('MongoDB connected'))
+  .catch((err) => console.error('MongoDB connection failed:', err));
 
-// Listing Schema
+// Mongoose Schema
 const ListingSchema = new mongoose.Schema({
   listingId: { type: Number, required: true, unique: true },
   productName: { type: String, required: true, trim: true },
@@ -56,17 +48,13 @@ const ListingSchema = new mongoose.Schema({
       timestamp: { type: Date, default: Date.now },
     },
   ],
-}, {
-  timestamps: true,
-});
+}, { timestamps: true });
 
 ListingSchema.index({ status: 1 });
-
 const Listing = mongoose.model('Listing', ListingSchema);
 
-// --- API Routes ---
+// API Routes
 
-// Create a pending listing
 app.post('/api/listings', async (req, res) => {
   try {
     const {
@@ -113,7 +101,6 @@ app.post('/api/listings', async (req, res) => {
   }
 });
 
-// Update listing status and purchase history
 app.put('/api/listings/:listingId', async (req, res) => {
   try {
     const { listingId } = req.params;
@@ -153,7 +140,6 @@ app.put('/api/listings/:listingId', async (req, res) => {
   }
 });
 
-// Get all listed items
 app.get('/api/listings', async (req, res) => {
   try {
     const listings = await Listing.find({ status: 'Listed' });
@@ -164,7 +150,6 @@ app.get('/api/listings', async (req, res) => {
   }
 });
 
-// Get a specific listing by listingId
 app.get('/api/listings/:listingId', async (req, res) => {
   try {
     const { listingId } = req.params;
@@ -179,7 +164,6 @@ app.get('/api/listings/:listingId', async (req, res) => {
   }
 });
 
-// Delete a listing (only by the seller)
 app.delete('/api/listings/:listingId', async (req, res) => {
   try {
     const { listingId } = req.params;
@@ -206,7 +190,6 @@ app.delete('/api/listings/:listingId', async (req, res) => {
   }
 });
 
-// Get user's collection by wallet
 app.get('/api/listings/collection/:wallet', async (req, res) => {
   try {
     const listings = await Listing.find({
@@ -219,7 +202,6 @@ app.get('/api/listings/collection/:wallet', async (req, res) => {
   }
 });
 
-// Record resale purchase
 app.post('/api/resale-purchases', async (req, res) => {
   try {
     const { listingId, buyer, price, tokenId } = req.body;
@@ -251,15 +233,4 @@ app.post('/api/resale-purchases', async (req, res) => {
   }
 });
 
-// Start the server
-const startServer = async () => {
-  try {
-    await connectDB();
-    app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
-  } catch (error) {
-    console.error('Failed to start server:', error);
-    process.exit(1);
-  }
-};
-
-startServer();
+module.exports = app;
